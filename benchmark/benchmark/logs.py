@@ -95,6 +95,7 @@ class LogParser:
 
             self.collocate = True
 
+        self.client_threshold = 2*int(self.config['f']) + int(self.config['c']) + 1
         committed_blocks = [x.items() for x in block_commits]
         self.block_proposals = self._representative_results_by_digest([x.items() for x in block_proposals], True)
         self.block_first_commits = self._representative_results_by_digest(committed_blocks, True)
@@ -123,7 +124,7 @@ class LogParser:
             # Sort the results for each digest by timestamp
             sorted_timestamps = sorted(merged[digest])
             # Consider the first 2f+1 readings honest
-            honest_timestamps = sorted_timestamps[0:2*f+1]
+            honest_timestamps = sorted_timestamps[0:self.client_threshold]
 
             if keep_least:
                 filtered[digest] = honest_timestamps[0]
