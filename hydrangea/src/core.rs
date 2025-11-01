@@ -271,14 +271,6 @@ impl Core {
         }
     }
 
-    fn should_vote(&self, author: &PublicKey) -> bool {
-        let my_id = self.committee.id(&self.name);
-        if my_id >= 41 {
-            return false;
-        }
-        true
-    }
-
     async fn try_commit_or_sync_ancestor(&mut self, block: &Block) -> ConsensusResult<()> {
         // Should only ever call this function with recent blocks.
         assert!(block.round > self.last_commit.round);
@@ -344,12 +336,13 @@ impl Core {
     async fn store_block(&mut self, block: &Block) {
         // Should only ever call this function with recent blocks.
         assert!(block.round > self.last_commit.round);
+
         // Store in-memory.
         self.update_pending_proposals(block);
         self.uncommitted_blocks
             .insert(block.digest(), block.clone());
 
-        let _ = self.observe_payload(block).await;
+        // let _ = self.observe_payload(block).await;
         // Write to disk
         let key = block.digest().to_vec();
         let value = bincode::serialize(block).expect("Failed to serialize block");
@@ -399,15 +392,15 @@ impl Core {
         // Send all the newly committed blocks to the node's application layer.
         while let Some(committing) = to_commit.pop() {
             // This log is required for generating benchmark outputs.
-            info!("Committed {:?}", committing);
+            info!("Committed {:?}", committing.round);
 
             if !self.consensus_only {
                 let payload = committing.payload.clone();
                 // Send the payload to the committer.
-                self.tx_commit
-                    .send(payload)
-                    .await
-                    .expect("Failed to send payload");
+                // self.tx_commit
+                //     .send(payload)
+                //     .await
+                //     .expect("Failed to send payload");
                 //     let payload = committing.payload.clone();
 
                 //     // Output the block to the top-level application.
@@ -471,7 +464,7 @@ impl Core {
                 .cloned()
                 .expect("Fatal: Block in pending_proposals not in uncommitted_blocks.");
 
-            if self.round == b.round && self.can_vote(&b) && self.should_vote(&self.name) {
+            if self.round == b.round && self.can_vote(&b) {
                 self.send_prepare_vote(&b).await?;
             }
         }
@@ -493,8 +486,22 @@ impl Core {
         Ok(())
     }
 
-    async fn send_vote(&mut self, b: Digest, r: Round, t: VoteType) -> ConsensusResult<()> {
-        let vote = Vote::new(self.name, b, t.clone(), r, &mut self.bls_signature_service).await;
+    async fn send_vote(
+        &mut self,
+        b: Digest,
+        r: Round,
+        t: VoteType,
+        payload_len: usize,
+    ) -> ConsensusResult<()> {
+        let vote = Vote::new(
+            self.name,
+            b,
+            t.clone(),
+            r,
+            payload_len,
+            &mut self.bls_signature_service,
+        )
+        .await;
         debug!("Created {:?}", vote);
 
         let _ = self.handle_vote(&vote).await;
@@ -505,8 +512,13 @@ impl Core {
     }
 
     async fn send_prepare_vote(&mut self, block: &Block) -> ConsensusResult<()> {
-        self.send_vote(block.digest(), block.round, VoteType::Normal)
-            .await
+        self.send_vote(
+            block.digest(),
+            block.round,
+            VoteType::Normal,
+            block.payload.len(),
+        )
+        .await
     }
 
     async fn send_timeout(&mut self, round: Round) -> ConsensusResult<()> {
@@ -618,7 +630,7 @@ impl Core {
     }
 
     async fn propose_if_leader(&mut self, r: Round, trigger: ProposalTrigger) {
-        if self.name == self.leader_elector.get_leader(r) {
+        if self.name == self.leader_elector.get_leader(0) {
             self.tx_proposer
                 .send(ProposerMessage::Propose(trigger))
                 .await
@@ -648,10 +660,10 @@ impl Core {
     }
 
     async fn observe_payload(&mut self, block: &Block) -> ConsensusResult<()> {
-        self.tx_proposer
-            .send(ProposerMessage::Observed(block.payload.clone()))
-            .await
-            .expect("Failed to send message to proposer");
+        // self.tx_proposer
+        //     .send(ProposerMessage::Observed(block.payload.clone()))
+        //     .await
+        //     .expect("Failed to send message to proposer");
         Ok(())
     }
 
@@ -674,7 +686,7 @@ impl Core {
 
                 if self.last_timeout < qc.round {
                     // Send a Commit Vote.
-                    self.send_vote(qc.blk_hash.clone(), qc.round, VoteType::Commit)
+                    self.send_vote(qc.blk_hash.clone(), qc.round, VoteType::Commit, 0)
                         .await?
                 }
             }
@@ -774,7 +786,7 @@ impl Core {
         // Ensure that the block proposer is the leader of block.round.
         // TODO: This should yield an error log, not panic.
         ensure!(
-            block.author == self.leader_elector.get_leader(block.round),
+            block.author == self.leader_elector.get_leader(0),
             ConsensusError::WrongLeader {
                 digest,
                 leader: block.author,

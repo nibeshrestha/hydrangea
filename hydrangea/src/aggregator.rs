@@ -112,20 +112,20 @@ impl QCMaker {
             // verification is more expensive).
 
             self.used.insert(author);
-            self.votes.push((author_bls_g2, vote.signature.clone()));
+            // self.votes.push((author_bls_g2, vote.signature.clone()));
 
             if !self.is_qc_formed {
-                let id = committee.sorted_keys.binary_search(&author_bls_g2).unwrap();
-                let chunk = id / 128;
-                let bit = id % 128;
-                self.pk_bit_vec[chunk] &= !(1 << bit);
+                // let id = committee.sorted_keys.binary_search(&author_bls_g2).unwrap();
+                // let chunk = id / 128;
+                // let bit = id % 128;
+                // self.pk_bit_vec[chunk] &= !(1 << bit);
 
-                if self.votes.len() == 1 {
-                    self.agg_sign = vote.signature;
-                } else if self.votes.len() >= 2 {
-                    let new_agg_sign = aggregate_sign(&self.agg_sign, &vote.signature);
-                    self.agg_sign = new_agg_sign;
-                }
+                // if self.votes.len() == 1 {
+                //     self.agg_sign = vote.signature;
+                // } else if self.votes.len() >= 2 {
+                //     let new_agg_sign = aggregate_sign(&self.agg_sign, &vote.signature);
+                //     self.agg_sign = new_agg_sign;
+                // }
 
                 self.weight += committee.stake(&author);
                 if vote.kind == VoteType::Normal && self.weight == committee.quorum_threshold()
@@ -135,27 +135,27 @@ impl QCMaker {
                     self.weight = 0; // Ensures QC of this type is only made once.
                     self.is_qc_formed = true;
 
-                    let mut ids = Vec::new();
+                    // let mut ids = Vec::new();
 
-                    for idx in 0..committee.size() {
-                        let x = idx / 128;
-                        let chunk = self.pk_bit_vec[x];
-                        let ridx = idx - x * 128;
-                        if chunk & 1 << ridx != 0 {
-                            ids.push(idx);
-                        }
-                    }
-                    let agg_pk =
-                        remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
-                    SignatureShareG1::verify_batch(&vote.digest().0, &agg_pk, &self.agg_sign)?;
+                    // for idx in 0..committee.size() {
+                    //     let x = idx / 128;
+                    //     let chunk = self.pk_bit_vec[x];
+                    //     let ridx = idx - x * 128;
+                    //     if chunk & 1 << ridx != 0 {
+                    //         ids.push(idx);
+                    //     }
+                    // }
+                    // let agg_pk =
+                    //     remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
+                    // SignatureShareG1::verify_batch(&vote.digest().0, &agg_pk, &self.agg_sign)?;
 
-                    info!("Constructed {} QC. Votes: {} ", vote.kind, self.votes.len(),);
+                    // info!("Constructed {} QC. Votes: {} ", vote.kind, self.votes.len(),);
 
                     return Ok(Some(QC {
                         blk_hash: vote.blk_hash.clone(),
                         kind: vote.kind,
                         round: vote.round,
-                        votes: (self.pk_bit_vec.clone(), self.agg_sign.clone()),
+                        // votes: (self.pk_bit_vec.clone(), self.agg_sign.clone()),
                     }));
                 }
             }

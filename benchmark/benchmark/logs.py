@@ -64,7 +64,8 @@ class LogParser:
             header_dispatches, \
             header_commits, \
             self.received_samples, \
-            sizes = zip(*results)
+            sizes, \
+            leader_proposals = zip(*results)
 
         if not consensus_only:            
             committed_headers = [x.items() for x in header_commits]
@@ -100,6 +101,7 @@ class LogParser:
         self.block_proposals = self._representative_results_by_digest([x.items() for x in block_proposals], True)
         self.block_first_commits = self._representative_results_by_digest(committed_blocks, True)
         self.block_last_commits = self._representative_results_by_digest(committed_blocks, False)
+        self.payload_len = sum(leader_proposals[0][1:])
 
     # Filters the given list of results for each node (where each result
     # set is itself a list of (digest, timestamp) pairs), keeping the 
@@ -210,14 +212,14 @@ class LogParser:
 
         # Consensus block creation
         block_proposals = self._map_timestamps_to_digests(
-            r'\[(.*Z) .* Created ([^ ]+): CMB\(.*\)', log)
+            r'\[(.*Z) .* Created Round (\d+)', log)
         
-        # block_proposals = self._map_timestamps_to_digests(
-        #     r'\[(.*Z) .* Created ([^ ]+): HSB\(.*\)', log)
+        tmp = findall(r'.* Proposing .* payload_len (\d+)', log)
+        leader_proposals = [int(d) for d in tmp]
 
         # Consensus block commit
         block_commits = self._map_timestamps_to_digests(
-            r'\[(.*Z) .* Committed ([^ ]+): CMB\(.*\)', log)
+            r'\[(.*Z) .* Committed (\d+)', log)
         
         # block_commits = self._map_timestamps_to_digests(
         #     r'\[(.*Z) .* Committed ([^ ]+): HSB\(.*\)', log)
@@ -244,7 +246,7 @@ class LogParser:
 
         return ip, block_proposals, block_commits, block_receipts, block_send_ends, \
             ack_to_receipt_delays, vote_creations, vote_receipts, header_proposals, \
-            header_dispatches, header_commits, samples, sizes
+            header_dispatches, header_commits, samples, sizes, leader_proposals
     
     def _parse_config(self, header):
         return {
@@ -291,6 +293,9 @@ class LogParser:
             ),
             'k': str(
                 search(r'K value set to (\d+)', header).group(1)
+            ),
+            'client_rate': str(
+                search(r'ClientRate value set to (\d+)', header).group(1)
             ),
         }
         
@@ -445,7 +450,13 @@ class LogParser:
         return datetime.timestamp(x)
 
     def _latency(self, proposals, commits: map):
-        latency = [c - proposals[d] for d, c in commits.items()]
+        latency = []
+        for d, c in commits.items():
+            try:
+                t = c - proposals[d]
+                latency.append(t)
+            except:
+                pass
         return mean(latency) * 1000, median(latency) * 1000 if latency else 0
 
     def _narwhal_throughput(self, start, commits: map):
@@ -488,6 +499,7 @@ class LogParser:
         sync_retry_nodes = self.config['sync_retry_nodes']
         faults = self.config['faults']
         leader_elector = self.config['leader_elector']
+        client_rate = self.config['client_rate']
 
         if self.consensus_only:
             return (
@@ -499,6 +511,7 @@ class LogParser:
                 f" F: {self.config['f']}\n"
                 f" C: {self.config['c']}\n"
                 f" K: {self.config['k']}\n"
+                f" Client rate: {client_rate}\n"
                 '\n'
                 f' Block size: {block_size:,} Certificates\n'
                 f' Timeout delay: {timeout_delay:,} ms\n'
@@ -541,28 +554,21 @@ class LogParser:
         _, blps_first, _ = self._throughput(first_proposal_time, self.block_first_commits)
         committed, blps_last, duration = \
             self._throughput(first_proposal_time, self.block_last_commits)
-        bcl_mean_first, bcl_median_first = \
-            self._latency(self.block_proposals, self.block_first_commits)
+        # bcl_mean_first, bcl_median_first = \
+            # self._latency(self.block_proposals, self.block_first_commits)
         bcl_mean_last, bcl_median_last = \
             self._latency(self.block_proposals, self.block_last_commits)  
          
-        csv_file_path = f'benchmark_{self.committee_size}_{self.config["header_size"]}_{self.config["block_size"]}.csv'
-
-        write_consensus_to_csv(round(bcl_mean_first), round(bcl_median_first), round(blps_first), round(bcl_mean_last), round(bcl_median_last), round(blps_last), csv_file_path)
-        
+        throughput = self.payload_len * self.committee_size / ( 3 * 512 * duration)
         return (
             f' Execution time: {round(duration):,} s\n'
             f'\n'
             f' Block Commit:\n'
-            f'   To First Commit:\n'
-            f'     Mean Latency: {round(bcl_mean_first):,} ms\n'
-            f'     Median Latency: {round(bcl_median_first):,} ms\n'
-            f'     BLPS: {round(blps_first):,} blocks/s\n'
-            f'   To Last Commit:\n'
-            f'     Mean Latency: {round(bcl_mean_last):,} ms\n'
-            f'     Median Latency: {round(bcl_median_last):,} ms\n'
-            f'     BLPS: {round(blps_last):,} blocks/s\n'
-            f'   Total Blocks Committed: {round(committed):,}\n'
+            f'   Mean Latency: {round(bcl_mean_last):,} ms\n'
+            f'   Median Latency: {round(bcl_median_last):,} ms\n'
+            f'   BLPS: {round(blps_last):,} blocks/s\n'
+            f'   TPS: {round(throughput):,} tx/s\n'
+            f' Total Blocks Committed: {round(committed):,}\n'
         )
     
     def _narwhal_output(self):
@@ -603,8 +609,6 @@ class LogParser:
             self._latency(self.block_proposals, self.block_first_commits)
         bcl_mean_last, bcl_median_last = \
             self._latency(self.block_proposals, self.block_last_commits)  
-
-        write_to_csv(round(bcl_mean_first), round(bcl_median_first), round(bcl_mean_last), round(bcl_median_last), round(e2el_mean_first), round(e2el_median_first), round(e2el_mean_last), round(e2el_median_last), round(end_to_end_tps_last), round(end_to_end_bps_last), self.burst[0], csv_file_path)
 
         return (
             f' Header Dispatch to Consensus:\n'
@@ -683,29 +687,3 @@ class LogParser:
                     clients += [f.read()]
 
         return cls(clients, primaries, consensus_only=consensus_only, debug=debug)
-
-
-def write_to_csv(mean_latency_commit_first, median_latency_commit_first, mean_latency_commit_last, median_latency_commit_last, e2e_mean_latency_first_commit, e2e_median_latency_first_commit, e2e_mean_latency_last_commit,e2e_median_latency_last_commit, end_to_end_tps_last, end_to_end_bps_last, burst, csv_file_path):
-# Open the CSV file in append mode
-    with open(csv_file_path, mode='a', newline='') as csv_file:
-        writer = csv.writer(csv_file)
-        column_names = ['Block First Commit Mean Latency', 'Block First Commit Median Latency', 'Block Last Commit Mean Latency', 'block Last Commit Mean Latency', 'E2E First Commit Mean Latency', 'E2E First Commit Median Latency', 'E2E Last Commit Mean Latency', 'E2E Last Commit Median Latency', 'TPS', 'BPS', 'Burst']
-        # If the file is empty, write the header
-        if csv_file.tell() == 0:
-            writer.writerow(column_names)
-
-        # Write the extracted data to the CSV file
-        writer.writerow([mean_latency_commit_first, median_latency_commit_first, mean_latency_commit_last, median_latency_commit_last, e2e_mean_latency_first_commit, e2e_median_latency_first_commit, e2e_mean_latency_last_commit, e2e_median_latency_last_commit, end_to_end_tps_last, end_to_end_bps_last, burst])
-
-
-def write_consensus_to_csv(mean_latency_commit_first, median_latency_commit_first, blps_first, mean_latency_commit_last, median_latency_commit_last, blps_last, csv_file_path):
-# Open the CSV file in append mode
-    with open(csv_file_path, mode='a', newline='') as csv_file:
-        writer = csv.writer(csv_file)
-        column_names = ['Block First Commit Mean Latency', 'Block First Commit Median Latency', 'BLPS_first', 'Block Last Commit Mean Latency', 'block Last Commit Mean Latency', 'BLPS_last']
-        # If the file is empty, write the header
-        if csv_file.tell() == 0:
-            writer.writerow(column_names)
-
-        # Write the extracted data to the CSV file
-        writer.writerow([mean_latency_commit_first, median_latency_commit_first, blps_first, mean_latency_commit_last, median_latency_commit_last, blps_last])

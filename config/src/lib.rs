@@ -104,6 +104,7 @@ pub struct Parameters {
     pub f: u32,
     pub c: u32,
     pub k: u32,
+    pub client_rate: u32,
 }
 
 impl Default for Parameters {
@@ -125,6 +126,7 @@ impl Default for Parameters {
             f: 3,
             c: 2,
             k: 1,
+            client_rate: 10,
         }
     }
 }
@@ -146,6 +148,7 @@ impl Parameters {
         info!("F value set to {}", self.f);
         info!("C value set to {}", self.c);
         info!("K value set to {}", self.k);
+        info!("ClientRate value set to {}", self.client_rate);
         info!("Max header delay set to {} ms", self.max_header_delay);
         info!("Garbage collection depth set to {} rounds", self.gc_depth);
         info!("Sync retry delay set to {} ms", self.sync_retry_delay);

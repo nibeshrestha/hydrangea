@@ -38,6 +38,9 @@ pub struct Proposer {
     network: ReliableSender,
     proposal_request: Option<ProposalTrigger>,
     buffer: Vec<Certificate>,
+    last_proposal_time: Instant,
+    client_rate: u32,
+    first: bool,
 }
 
 impl Proposer {
@@ -50,6 +53,7 @@ impl Proposer {
         rx_mempool: Receiver<Certificate>,
         rx_message: Receiver<ProposerMessage>,
         tx_proposer_core: Sender<ProposalMessage>,
+        client_rate: u32,
     ) {
         tokio::spawn(async move {
             Self {
@@ -67,6 +71,9 @@ impl Proposer {
                 network: ReliableSender::new(),
                 proposal_request: None,
                 buffer: Vec::new(),
+                last_proposal_time: Instant::now(),
+                client_rate,
+                first: true,
             }
             .run()
             .await;
@@ -78,25 +85,36 @@ impl Proposer {
     // Such pending txs should be those included in blocks that have been proposed/voted on
     // but have not yet satisfied the commit rule. Txs should only be removed from the Proposer
     // once they have been committed.
-    fn get_payload(&mut self) -> Vec<Certificate> {
-        if self.consensus_only {
-            let mut payload = Vec::new();
-
-            for _ in 0..self.max_block_size {
-                // TODO: Payloads for all PoC blocks are the same, but when it is possible
-                // for them to differ then it is necessary for the Proposer to ensure that
-                // it reproposes the same block
-                payload.push(Certificate::default());
-            }
-
-            payload
+    fn get_payload(&mut self) -> Vec<u8> {
+        // if self.consensus_only {
+        let mut payload = Vec::new();
+        let mut num_txns: usize;
+        if self.first {
+            num_txns = 1;
+            self.first = false;
         } else {
-            if self.buffer.len() < self.max_block_size {
-                self.buffer.drain(..).collect()
-            } else {
-                self.buffer.drain(0..self.max_block_size).collect()
-            }
+            let duration = self.last_proposal_time.elapsed().as_millis();
+            num_txns = (duration * self.client_rate as u128 / 1000) as usize;
+            info!("NumTxns {:?} {:?}", num_txns, duration);
         }
+        let payload_size = ((512 * num_txns * 3) as f32 / self.committee.size() as f32) as usize;
+        payload = vec![0u8; payload_size];
+
+        // for _ in 0..self.num_txns {
+        //     // TODO: Payloads for all PoC blocks are the same, but when it is possible
+        //     // for them to differ then it is necessary for the Proposer to ensure that
+        //     // it reproposes the same block
+        //     payload.push(Certificate::default());
+        // }
+
+        payload
+        // } else {
+        //     if self.buffer.len() < self.max_block_size {
+        //         self.buffer.drain(..).collect()
+        //     } else {
+        //         self.buffer.drain(0..self.max_block_size).collect()
+        //     }
+        // }
     }
 
     async fn send_proposal(&mut self, proposal: ProposalMessage) {
@@ -131,7 +149,7 @@ impl Proposer {
     }
 
     fn record_proposal(&mut self, b: Block) {
-        info!("Created {:?}", b);
+        info!("Created Round {:?}", b.round + 1);
         self.last_proposed = b;
     }
 
@@ -169,6 +187,9 @@ impl Proposer {
             ProposalTrigger::QC(parent_qc) => self.make_normal_proposal(parent_qc).await,
             ProposalTrigger::TC(tc) => self.make_fallback_proposal(tc).await,
         };
+
+        self.last_proposal_time = Instant::now();
+
         // Send the Proposal to the Core for local processing.
         self.tx_proposer_core
             .send(proposal.clone())

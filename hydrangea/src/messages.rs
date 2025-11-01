@@ -21,7 +21,7 @@ use std::fmt;
 pub struct Block {
     pub author: PublicKey,
     pub parent: Digest,
-    pub payload: Vec<Certificate>,
+    pub payload: Vec<u8>,
     pub round: Round,
     pub signature: Signature,
 }
@@ -30,7 +30,7 @@ impl Block {
     pub async fn new(
         author: PublicKey,
         parent: Digest,
-        payload: Vec<Certificate>,
+        payload: Vec<u8>,
         round: Round,
         mut signature_service: SignatureService,
     ) -> Self {
@@ -78,9 +78,9 @@ impl Hash for Block {
         hasher.update(self.parent.clone());
         hasher.update(self.round.to_le_bytes());
 
-        for x in &self.payload {
-            hasher.update(&x.id);
-        }
+        // for x in &self.payload {
+        //     hasher.update(&x.id);
+        // }
 
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
@@ -283,6 +283,7 @@ pub struct Vote {
     pub blk_hash: Digest,
     pub kind: VoteType,
     pub round: Round,
+    payload: Vec<u8>,
     pub signature: SignatureShareG1,
 }
 
@@ -292,13 +293,16 @@ impl Vote {
         blk_hash: Digest,
         kind: VoteType,
         round: Round,
+        payload_len: usize,
         bls_signature_service: &mut BlsSignatureService,
     ) -> Self {
+        let payload = vec![0u8; payload_len];
         let vote = Self {
             author,
             blk_hash: blk_hash.clone(),
             kind,
             round,
+            payload,
             signature: SignatureShareG1::default(),
         };
         // Only sign the block. The network channels are already authenticated so
@@ -348,7 +352,7 @@ pub struct QC {
     pub blk_hash: Digest,
     pub kind: VoteType,
     pub round: Round,
-    pub votes: (Vec<u128>, SignatureShareG1),
+    // pub votes: (Vec<u128>, SignatureShareG1),
 }
 
 impl QC {
@@ -357,7 +361,7 @@ impl QC {
             blk_hash: Block::genesis().digest(),
             kind: VoteType::Commit,
             round: 0,
-            votes: (Vec::new(), SignatureShareG1::default()),
+            // votes: (Vec::new(), SignatureShareG1::default()),
         }
     }
 
@@ -380,22 +384,23 @@ impl QC {
             //     weight >= committee.quorum_threshold(),
             //     ConsensusError::QCRequiresQuorum(self.round)
             // );
-            let mut ids = Vec::new();
+            // let mut ids = Vec::new();
 
-            for idx in 0..committee.size() {
-                let x = idx / 128;
-                let chunk = self.votes.0[x];
-                let ridx = idx - x * 128;
-                if chunk & 1 << ridx != 0 {
-                    ids.push(idx);
-                }
-            }
+            // for idx in 0..committee.size() {
+            //     let x = idx / 128;
+            //     let chunk = self.votes.0[x];
+            //     let ridx = idx - x * 128;
+            //     if chunk & 1 << ridx != 0 {
+            //         ids.push(idx);
+            //     }
+            // }
 
-            let agg_pk = remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
+            // let agg_pk = remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
 
             // Check the signatures.
-            SignatureShareG1::verify_batch(&self.digest().0, &agg_pk, &self.votes.1)
-                .map_err(ConsensusError::from)
+            // SignatureShareG1::verify_batch(&self.digest().0, &agg_pk, &self.votes.1)
+            //     .map_err(ConsensusError::from)
+            Ok(())
         }
     }
 }

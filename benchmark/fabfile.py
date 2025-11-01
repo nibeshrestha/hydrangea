@@ -14,8 +14,8 @@ from math import floor
 def local(ctx, debug=False, consensus_only=True, aggregate=False):
     ''' Run benchmarks on localhost '''
     bench_params = {
-        'faults': 1,
-        'nodes': 15,
+        'faults': 0,
+        'nodes': 10,
         'workers': 1,
         'rate': 100_000,
         'tx_size': 512,
@@ -25,11 +25,12 @@ def local(ctx, debug=False, consensus_only=True, aggregate=False):
     }
     node_params = {
         'n': bench_params['nodes'], # Number of nodes
-        'f': 2, #Number of Byzantine parties tolerated
-        'c': 2, # Number of crash faults,
-        'k': 4, # a parameter
+        'f': 3, #Number of Byzantine parties tolerated
+        'c': 0, # Number of crash faults,
+        'k': 0, # a parameter
         'max_block_size': 10,
         'consensus_only': consensus_only,
+        'client_rate': 2000,
         'timeout_delay': 1000,  # ms
         'header_size': 512_000,  # bytes
         'max_header_delay': 200,  # ms

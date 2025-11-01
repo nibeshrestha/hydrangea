@@ -144,6 +144,7 @@ impl Consensus {
             rx_mempool,
             /* rx_message */ rx_core_proposer,
             tx_proposer_core,
+            parameters.client_rate,
         );
 
         // Spawn the helper module.
