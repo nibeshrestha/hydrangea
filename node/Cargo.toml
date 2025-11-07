@@ -19,12 +19,11 @@ futures = "0.3.15"
 config = { path = "../config" }
 store = { path = "../store" }
 crypto = { path = "../crypto" }
-primary = { path = "../primary" }
 worker = { path = "../worker" }
 hydrangea = { path = "../hydrangea" }
 
 [features]
-benchmark = ["worker/benchmark", "primary/benchmark", "hydrangea/benchmark"]
+benchmark = ["worker/benchmark", "hydrangea/benchmark"]
 
 [[bin]]         
 name = "benchmark_client"   

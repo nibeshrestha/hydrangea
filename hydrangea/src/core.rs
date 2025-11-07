@@ -493,15 +493,7 @@ impl Core {
         t: VoteType,
         payload_len: usize,
     ) -> ConsensusResult<()> {
-        let vote = Vote::new(
-            self.name,
-            b,
-            t.clone(),
-            r,
-            payload_len,
-            &mut self.bls_signature_service,
-        )
-        .await;
+        let vote = Vote::new(self.name, b, t.clone(), r, payload_len).await;
         debug!("Created {:?}", vote);
 
         let _ = self.handle_vote(&vote).await;

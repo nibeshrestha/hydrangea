@@ -25,8 +25,8 @@ class GCPError(Exception):
         super().__init__(self.message)
 
 class InstanceManager:
-    INSTANCE_NAME = 'hydrangea-bench'
-    PROJECT_ID = 'supra-testnet-417213'
+    INSTANCE_NAME = 'Test'
+    PROJECT_ID = 'heroic-bliss-459216-g3'
 ##################################################################
 
     def __init__(self,settings):

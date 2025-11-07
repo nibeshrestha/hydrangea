@@ -101,7 +101,7 @@ class LogParser:
         self.block_proposals = self._representative_results_by_digest([x.items() for x in block_proposals], True)
         self.block_first_commits = self._representative_results_by_digest(committed_blocks, True)
         self.block_last_commits = self._representative_results_by_digest(committed_blocks, False)
-        self.payload_len = sum(leader_proposals[0][1:])
+        self.payload_len = sum(leader_proposals[0][10:])
 
     # Filters the given list of results for each node (where each result
     # set is itself a list of (digest, timestamp) pairs), keeping the 
@@ -117,6 +117,9 @@ class LogParser:
         # Collect all results by digest
         for node_results in input:
             for digest, timestamp in node_results:
+                if int(digest) <= 10:
+                    continue
+
                 if not digest in merged:
                     merged[digest] = [timestamp]
                 else:

@@ -7,7 +7,6 @@ use config::{BlsKeyPair, Comm, Committee, KeyPair, Parameters};
 use crypto::{BlsSignatureService, SignatureService};
 use env_logger::Env;
 use hydrangea::{Block, Consensus};
-use primary::Primary;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
 
@@ -146,20 +145,20 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
             let (tx_new_certificates, rx_new_certificates) = channel(CHANNEL_CAPACITY);
             let (tx_feedback, rx_feedback) = channel(CHANNEL_CAPACITY);
 
-            if !parameters.consensus_only {
-                Primary::spawn(
-                    name,
-                    name_bls_g1,
-                    name_bls_g2,
-                    committee.clone(),
-                    parameters.clone(),
-                    signature_service.clone(),
-                    bls_signature_service.clone(),
-                    store.clone(),
-                    /* tx_consensus */ tx_new_certificates,
-                    /* rx_consensus */ rx_feedback,
-                );
-            }
+            // if !parameters.consensus_only {
+            //     Primary::spawn(
+            //         name,
+            //         name_bls_g1,
+            //         name_bls_g2,
+            //         committee.clone(),
+            //         parameters.clone(),
+            //         signature_service.clone(),
+            //         bls_signature_service.clone(),
+            //         store.clone(),
+            //         /* tx_consensus */ tx_new_certificates,
+            //         /* rx_consensus */ rx_feedback,
+            //     );
+            // }
 
             Consensus::spawn(
                 name,

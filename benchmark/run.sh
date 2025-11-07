@@ -1,13 +1,13 @@
 #!/bin/bash
 
 RUNS=1
-BURSTS=(10 100 200 300 400 500 600 700 800) 
+BURSTS=(3500 4000) 
 
 for BURST in ${BURSTS[@]}
 do
     for i in $(seq 1 1 "$RUNS")
     do
-        if fab remote --block-size $BURST \
+        if fab remote --client-rate $BURST \
             | tee /dev/tty \
             | grep -i "error\|exception\|traceback"
         then

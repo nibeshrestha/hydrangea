@@ -284,7 +284,6 @@ pub struct Vote {
     pub kind: VoteType,
     pub round: Round,
     payload: Vec<u8>,
-    pub signature: SignatureShareG1,
 }
 
 impl Vote {
@@ -294,7 +293,6 @@ impl Vote {
         kind: VoteType,
         round: Round,
         payload_len: usize,
-        bls_signature_service: &mut BlsSignatureService,
     ) -> Self {
         let payload = vec![0u8; payload_len];
         let vote = Self {
@@ -303,12 +301,11 @@ impl Vote {
             kind,
             round,
             payload,
-            signature: SignatureShareG1::default(),
         };
         // Only sign the block. The network channels are already authenticated so
         // no need to sign the whole message.
-        let signature = bls_signature_service.request_signature(vote.digest()).await;
-        Self { signature, ..vote }
+        // let signature = bls_signature_service.request_signature(vote.digest()).await;
+        Self { ..vote }
     }
 
     pub fn is_well_formed(&self, committee: &Committee) -> ConsensusResult<()> {
