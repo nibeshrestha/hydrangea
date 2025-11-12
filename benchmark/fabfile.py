@@ -50,7 +50,7 @@ def local(ctx, debug=False, consensus_only=True, aggregate=False):
 
 
 @task
-def create(ctx, nodes=20):
+def create(ctx, nodes=2):
     ''' Create a testbed'''
     try:
         InstanceManager.make().create_instances(nodes)
@@ -113,19 +113,19 @@ def create_firewall(ctx):
 
 
 @task
-def remote(ctx, burst=50, debug=False, consensus_only=True, update=True, aggregate=False):
+def remote(ctx, block_size=100, debug=False, consensus_only=True, update=True, aggregate=False):
     ''' Run benchmarks on AWS '''
     
     bench_params = {
         'faults': 0,
-        'nodes': [20],
+        'nodes': [11],
         'workers': 1,
         'collocate': True,
         'rate': [100_000],
         'tx_size': 512,
         'duration': 60,
         'runs': 1,
-        'burst': [burst],
+        'burst': [50],
     }
 
     nodes = bench_params['nodes'][0]
@@ -138,10 +138,9 @@ def remote(ctx, burst=50, debug=False, consensus_only=True, update=True, aggrega
  
     node_params = {
         'n': bench_params['nodes'][0], # Number of nodes
-        'f': 3, #Number of Byzantine parties tolerated
-        'c': 1, # Number of crash faults,
-        'k': 8, # a parameter
-        'max_block_size': 1,
+        'f': 2, #Number of Byzantine parties tolerated
+        'k': 0, # a parameter
+        'max_block_size': block_size,
         'consensus_only': consensus_only,
         'timeout_delay': 5_000,  # ms
         'header_size': 1024_000,  # bytes
