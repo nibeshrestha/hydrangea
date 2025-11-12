@@ -4,7 +4,7 @@ use crate::error::{ConsensusError, ConsensusResult};
 use crate::leader::LeaderElector;
 use crate::mempool::MempoolDriver;
 use crate::messages::{
-    Block, FallbackRecoveryProposal, NormalProposal, Timeout, Vote, VoteType, QC, TC, WQC,
+    Block, FallbackRecoveryProposal, NormalProposal, Timeout, Vote, QC, TC, WQC,
 };
 use crate::proposer::{ProposalTrigger, ProposerMessage};
 use crate::synchronizer::Synchronizer;
@@ -117,7 +117,6 @@ impl Core {
             let lvote = Vote {
                 author: name,
                 blk_hash: genesis_block.digest(),
-                kind: VoteType::Normal,
                 round: 0,
                 signature: SignatureShareG1::default(),
             };
@@ -498,12 +497,11 @@ impl Core {
         Ok(())
     }
 
-    async fn send_vote(&mut self, b: Digest, r: Round, t: VoteType) -> ConsensusResult<()> {
-        let vote = Vote::new(self.name, b, t.clone(), r, &mut self.bls_signature_service).await;
+    async fn send_vote(&mut self, b: Digest, r: Round) -> ConsensusResult<()> {
+        let vote = Vote::new(self.name, b, r, &mut self.bls_signature_service).await;
         debug!("Created {:?}", vote);
-        if vote.kind == VoteType::Normal {
-            self.last_vote = vote.clone();
-        }
+        
+        self.last_vote = vote.clone();
 
         let _ = self.handle_vote(&vote).await;
 
@@ -513,7 +511,7 @@ impl Core {
     }
 
     async fn send_prepare_vote(&mut self, block: &Block) -> ConsensusResult<()> {
-        self.send_vote(block.digest(), block.round, VoteType::Normal)
+        self.send_vote(block.digest(), block.round)
             .await
     }
 
@@ -554,11 +552,7 @@ impl Core {
         debug!("Received {:?}", vote);
         if vote.round > self.last_commit.round {
             debug!("Processing {:?}", vote);
-            let qc = match vote.kind {
-                VoteType::Commit => self.aggregator.add_commit_vote(vote.clone())?,
-                _ => self.aggregator.add_normal_vote(vote.clone())?,
-            };
-            if let Some(qc) = qc {
+            if let Some(qc) = self.aggregator.add_normal_vote(vote.clone())? {
                 debug!("Assembled {:?}", qc);
                 self.handle_qc(&qc).await?;
             }
@@ -682,11 +676,11 @@ impl Core {
                 // Can now sync peers in lower rounds using this QC, so no need to keep Timeouts.
                 self.aggregator.cleanup_timeouts(&self.locked.round);
 
-                if self.last_timeout < qc.round {
+                // if self.last_timeout < qc.round {
                     // Send a Commit Vote.
-                    self.send_vote(qc.blk_hash.clone(), qc.round, VoteType::Commit)
-                        .await?
-                }
+                    // self.send_vote(qc.blk_hash.clone(), qc.round, VoteType::Commit)
+                        // .await?
+                // }
             }
 
             // See if we have the related block and request it from our peers if we do not.
@@ -703,7 +697,6 @@ impl Core {
             // qc.is_well_formed(&self.committee, &self.sorted_keys, &self.combined_pubkey)?;
             debug!("Processing new QC {:?}", qc);
             self.schedule_commit(&qc.blk_hash, qc.round).await?;
-            // self.broadcast(ConsensusMessage::QC(qc.clone())).await;
             self.aggregator.cleanup_prepares(&qc.round);
         }
         // else: Already observed this Commit QC but still syncing ancestors. Ignore.
@@ -713,7 +706,7 @@ impl Core {
     // TODO: Change to return a bool based on whether QC quorum is valid once panics have been removed.
     async fn handle_qc(&mut self, qc: &QC) -> ConsensusResult<()> {
         if qc.round > self.last_commit.round {
-            if qc.kind == VoteType::Commit || qc.fast_quorum {
+            if qc.fast_quorum {
                 self.handle_commit_qc(qc).await
             } else {
                 self.handle_prepare_qc(qc).await
@@ -906,20 +899,9 @@ impl Core {
 
     fn sanitize_certificate(&mut self, qc: &QC) -> ConsensusResult<()> {
         if qc.round > self.last_commit.round {
-            match qc.kind {
-                VoteType::Commit => {
-                    if !self.committable_blocks.contains_key(&qc.blk_hash) {
-                        // let start_time = Instant::now();
-                        qc.is_well_formed(&self.committee)?;
-                    }
-                }
-                _ => {
-                    if !self.uncommitted_qcs.contains_key(&qc.round) {
-                        // let start_time = Instant::now();
-                        qc.is_well_formed(&self.committee)?;
-                    }
-                }
-            }
+            if !self.uncommitted_qcs.contains_key(&qc.round) {
+                qc.is_well_formed(&self.committee)?;
+            }       
         }
         Ok(())
     }

@@ -17,7 +17,6 @@ pub struct Aggregator {
     committee: Committee,
     // Proposals indexed by round and block digest.
     votes_aggregators: HashMap<Round, HashMap<Digest, Box<QCMaker>>>,
-    commit_aggregators: HashMap<Round, Box<QCMaker>>,
     timeouts_aggregators: HashMap<Round, Box<TCMaker>>,
 }
 
@@ -26,7 +25,6 @@ impl Aggregator {
         Self {
             committee,
             votes_aggregators: HashMap::new(),
-            commit_aggregators: HashMap::new(),
             timeouts_aggregators: HashMap::new(),
         }
     }
@@ -44,15 +42,7 @@ impl Aggregator {
             .or_insert_with(HashMap::new)
             .entry(vote.blk_hash.clone())
             .or_insert_with(|| Box::new(QCMaker::new(total_nodes)))
-            .append(vote, &self.committee, true)
-    }
-
-    pub fn add_commit_vote(&mut self, vote: Vote) -> ConsensusResult<Option<QC>> {
-        let total_nodes = self.committee.n as usize;
-        self.commit_aggregators
-            .entry(vote.round)
-            .or_insert_with(|| Box::new(QCMaker::new(total_nodes)))
-            .append(vote, &self.committee, false)
+            .append(vote, &self.committee)
     }
 
     pub fn add_timeout(&mut self, timeout: Timeout) -> ConsensusResult<(Stake, Option<TC>)> {
@@ -67,8 +57,6 @@ impl Aggregator {
 
     pub fn cleanup_prepares(&mut self, r: &Round) {
         self.votes_aggregators
-            .retain(|block_round, _| block_round > r);
-        self.commit_aggregators
             .retain(|block_round, _| block_round > r);
     }
 
@@ -107,7 +95,6 @@ impl QCMaker {
         &mut self,
         vote: Vote,
         committee: &Committee,
-        check_fast_threshold: bool,
     ) -> ConsensusResult<Option<QC>> {
         let author = vote.author;
         let author_bls_g2 = committee.get_bls_public_g2(&vote.author);
@@ -135,14 +122,9 @@ impl QCMaker {
                 }
 
                 self.weight += committee.stake(&author);
-                if vote.kind == VoteType::Normal && self.weight == committee.quorum_threshold()
-                    || vote.kind == VoteType::Commit
-                        && self.weight == committee.slow_commit_threshold()
+                if self.weight == committee.quorum_threshold()
                 {
                     // self.weight = 0; // Ensures QC of this type is only made once.
-                    if !check_fast_threshold {
-                        self.is_qc_formed = true;
-                    }
 
                     let mut ids = Vec::new();
 
@@ -158,17 +140,15 @@ impl QCMaker {
                         remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
                     SignatureShareG1::verify_batch(&vote.digest().0, &agg_pk, &self.agg_sign)?;
 
-                    info!("Constructed {} QC. Votes: {} ", vote.kind, self.votes.len(),);
+                    info!("Constructed QC. Votes: {} Round: {}", self.votes.len(), vote.round);
 
                     return Ok(Some(QC {
                         blk_hash: vote.blk_hash.clone(),
-                        kind: vote.kind,
                         round: vote.round,
                         votes: (self.pk_bit_vec.clone(), self.agg_sign.clone()),
                         fast_quorum: false,
                     }));
-                } else if vote.kind == VoteType::Normal
-                    && self.weight == committee.fast_commit_quorum_threshold()
+                } else if self.weight == committee.fast_commit_quorum_threshold()
                 {
                     self.weight = 0;
                     self.is_qc_formed = true;
@@ -187,14 +167,12 @@ impl QCMaker {
                         remove_pubkeys(&committee.combined_pubkey, ids, &committee.sorted_keys);
                     SignatureShareG1::verify_batch(&vote.digest().0, &agg_pk, &self.agg_sign)?;
                     info!(
-                        "Constructed {} Fast path quorum. Votes: {} ",
-                        vote.kind,
-                        self.votes.len()
+                        "Constructed Fast path QC. Votes: {} Round: {}",
+                        self.votes.len(), vote.round,
                     );
 
                     return Ok(Some(QC {
                         blk_hash: vote.blk_hash.clone(),
-                        kind: vote.kind,
                         round: vote.round,
                         votes: (self.pk_bit_vec.clone(), self.agg_sign.clone()),
                         fast_quorum: true,
@@ -229,7 +207,8 @@ impl TCMaker {
     }
 
     fn check_wqc(&mut self, committee: &Committee) -> Option<WQC> {
-        let weak_cert_threshold = (committee.f + committee.p + 1) as usize;
+        // TODO: fix threshold below
+        let weak_cert_threshold = (2*committee.f + 1) as usize;
         let mut freq_map = HashMap::new();
         for hv in &self.high_votes {
             freq_map

@@ -252,7 +252,6 @@ class NodeParameters:
         try:
             inputs += [json['n']]
             inputs += [json['f']]
-            inputs += [json['c']]
             inputs += [json['k']]
             inputs += [json['timeout_delay']]
             inputs += [json['header_size']]
@@ -271,10 +270,9 @@ class NodeParameters:
 
         numNodes = int(json['n'])
         f = int(json['f'])
-        c = int(json['c'])
         k = int(json['k'])
 
-        if numNodes != 3*f+2*c+k+1:
+        if numNodes != 5*f+k+1:
             raise ConfigError('Insufficient number of nodes')
 
         self.json = json

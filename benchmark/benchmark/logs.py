@@ -99,7 +99,9 @@ class LogParser:
         self.block_proposals = self._representative_results_by_digest([x.items() for x in block_proposals], True)
         self.block_first_commits = self._representative_results_by_digest(committed_blocks, True)
         self.block_last_commits = self._representative_results_by_digest(committed_blocks, False)
-
+        
+        self.block_proposals_timestamps = sorted(self.block_proposals.values())
+    
     # Filters the given list of results for each node (where each result
     # set is itself a list of (digest, timestamp) pairs), keeping the 
     # representative timestamp for each digest in the result set. This
@@ -284,9 +286,6 @@ class LogParser:
             ),
             'f': str(
                 search(r'F value set to (\d+)', header).group(1)
-            ),
-            'c': str(
-                search(r'C value set to (\d+)', header).group(1)
             ),
             'k': str(
                 search(r'K value set to (\d+)', header).group(1)
@@ -496,7 +495,6 @@ class LogParser:
                 f' Faults: {faults} node(s)\n'
                 f' Committee size: {self.committee_size} node(s)\n'
                 f" F: {self.config['f']}\n"
-                f" C: {self.config['c']}\n"
                 f" K: {self.config['k']}\n"
                 '\n'
                 f' Block size: {block_size:,} Certificates\n'
@@ -545,12 +543,15 @@ class LogParser:
         bcl_mean_last, bcl_median_last = \
             self._latency(self.block_proposals, self.block_last_commits)  
          
-        csv_file_path = f'benchmark_{self.committee_size}_{self.config["header_size"]}_{self.config["block_size"]}.csv'
+        # csv_file_path = f'benchmark_{self.committee_size}_{self.config["header_size"]}_{self.config["block_size"]}.csv'
 
-        write_consensus_to_csv(round(bcl_mean_first), round(bcl_median_first), round(blps_first), round(bcl_mean_last), round(bcl_median_last), round(blps_last), csv_file_path)
+        # write_consensus_to_csv(round(bcl_mean_first), round(bcl_median_first), round(blps_first), round(bcl_mean_last), round(bcl_median_last), round(blps_last), csv_file_path)
+        proposal_times = [(b-a) for a, b in zip(self.block_proposals_timestamps[:-1], self.block_proposals_timestamps[1:])]
+        block_proposal_time = mean(proposal_times) * 1000
         
         return (
             f' Execution time: {round(duration):,} s\n'
+            f' Block Proposal time : {round(block_proposal_time):,} ms\n'
             f'\n'
             f' Block Commit:\n'
             f'   To First Commit:\n'

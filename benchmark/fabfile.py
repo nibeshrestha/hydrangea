@@ -15,7 +15,7 @@ def local(ctx, debug=False, consensus_only=True, aggregate=False):
     ''' Run benchmarks on localhost '''
     bench_params = {
         'faults': 0,
-        'nodes': 15,
+        'nodes': 11,
         'workers': 1,
         'rate': 100_000,
         'tx_size': 512,
@@ -26,8 +26,7 @@ def local(ctx, debug=False, consensus_only=True, aggregate=False):
     node_params = {
         'n': bench_params['nodes'], # Number of nodes
         'f': 2, #Number of Byzantine parties tolerated
-        'c': 2, # Number of crash faults,
-        'k': 4, # a parameter
+        'k': 0, # a parameter
         'max_block_size': 10,
         'consensus_only': consensus_only,
         'timeout_delay': 100,  # ms
@@ -51,7 +50,7 @@ def local(ctx, debug=False, consensus_only=True, aggregate=False):
 
 
 @task
-def create(ctx, nodes=2):
+def create(ctx, nodes=20):
     ''' Create a testbed'''
     try:
         InstanceManager.make().create_instances(nodes)

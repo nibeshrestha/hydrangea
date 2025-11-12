@@ -102,7 +102,6 @@ pub struct Parameters {
 
     pub n: u32,
     pub f: u32,
-    pub c: u32,
     pub k: u32,
 }
 
@@ -123,7 +122,6 @@ impl Default for Parameters {
             leader_elector: LeaderElectorKind::Simple,
             n: 15,
             f: 3,
-            c: 2,
             k: 1,
         }
     }
@@ -144,7 +142,6 @@ impl Parameters {
         info!("Timeout delay set to {} ms", self.timeout_delay);
         info!("Header size set to {} B", self.header_size);
         info!("F value set to {}", self.f);
-        info!("C value set to {}", self.c);
         info!("K value set to {}", self.k);
         info!("Max header delay set to {} ms", self.max_header_delay);
         info!("Garbage collection depth set to {} rounds", self.gc_depth);
@@ -210,9 +207,7 @@ pub struct Committee {
     pub combined_pubkey: PublicKeyShareG2,
     pub n: u32,
     pub f: u32,
-    pub c: u32,
     pub k: u32,
-    pub p: u32,
     pub quorum_threshold: u32,
     pub slow_commit_threshold: u32,
     pub fast_commit_threshold: u32,
@@ -226,18 +221,16 @@ impl Committee {
         authorities: BTreeMap<PublicKey, Authority>,
         n: u32,
         f: u32,
-        c: u32,
         k: u32,
     ) -> Committee {
         let mut keys: Vec<_> = authorities.iter().map(|(_, x)| x.bls_pubkey_g2).collect();
         keys.sort();
 
-        let p = (c + k) as f64 / 2.0;
-        let x = (n + f + 1) as f64 / 2.0;
-        let quorum_threshold = x.ceil() as u32;
-        let slow_commit_threshold = 2 * f + c + 1;
-        let fast_commit_threshold = n - p as u32;
-        let view_change_threshold = n - f - c;
+        // let x = (n + f + 1) as f64 / 2.0;
+        let quorum_threshold = 2*f+1 as u32;
+        let slow_commit_threshold = 2 * f + 1;
+        let fast_commit_threshold = n - f as u32;
+        let view_change_threshold = n - f;
 
         let committee = Self {
             authorities,
@@ -245,9 +238,7 @@ impl Committee {
             combined_pubkey: combine_keys(&keys),
             n,
             f,
-            c,
             k,
-            p: p as u32,
             quorum_threshold,
             slow_commit_threshold,
             fast_commit_threshold,

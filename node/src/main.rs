@@ -6,7 +6,7 @@ use config::Import as _;
 use config::{BlsKeyPair, Comm, Committee, KeyPair, Parameters};
 use crypto::{BlsSignatureService, SignatureService};
 use env_logger::Env;
-use hydrangea::{Block, Consensus};
+use minimmit::{Block, Consensus};
 use primary::Primary;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
@@ -126,7 +126,6 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
         comm.authorities,
         parameters.n,
         parameters.f,
-        parameters.c,
         parameters.k,
     );
 

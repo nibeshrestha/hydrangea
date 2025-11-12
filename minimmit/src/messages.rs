@@ -257,7 +257,6 @@ impl fmt::Display for ProposalType {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Default, Debug)]
 pub enum VoteType {
-    Commit,
     #[default]
     Normal,
 }
@@ -266,7 +265,6 @@ impl Hash for VoteType {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
         match self {
-            Self::Commit => hasher.update("C"),
             Self::Normal => hasher.update("NV"),
         }
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
@@ -276,7 +274,6 @@ impl Hash for VoteType {
 impl fmt::Display for VoteType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Self::Commit => write!(f, "C"),
             Self::Normal => write!(f, "NV"),
         }
     }
@@ -288,7 +285,6 @@ impl fmt::Display for VoteType {
 pub struct Vote {
     pub author: PublicKey,
     pub blk_hash: Digest,
-    pub kind: VoteType,
     pub round: Round,
     pub signature: SignatureShareG1,
 }
@@ -297,14 +293,12 @@ impl Vote {
     pub async fn new(
         author: PublicKey,
         blk_hash: Digest,
-        kind: VoteType,
         round: Round,
         bls_signature_service: &mut BlsSignatureService,
     ) -> Self {
         let vote = Self {
             author,
             blk_hash: blk_hash.clone(),
-            kind,
             round,
             signature: SignatureShareG1::default(),
         };
@@ -334,7 +328,6 @@ impl Hash for Vote {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
         hasher.update(&self.blk_hash);
-        hasher.update(self.kind.digest());
         hasher.update(self.round.to_le_bytes());
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
@@ -344,8 +337,8 @@ impl fmt::Debug for Vote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "V({}, {}, {}, {})",
-            self.kind, self.author, self.round, self.blk_hash
+            "V({}, {}, {})",
+            self.author, self.round, self.blk_hash
         )
     }
 }
@@ -353,7 +346,6 @@ impl fmt::Debug for Vote {
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct QC {
     pub blk_hash: Digest,
-    pub kind: VoteType,
     pub round: Round,
     pub votes: (Vec<u128>, SignatureShareG1),
     pub fast_quorum: bool,
@@ -363,7 +355,6 @@ impl QC {
     pub fn genesis() -> Self {
         QC {
             blk_hash: Block::genesis().digest(),
-            kind: VoteType::Commit,
             round: 0,
             votes: (Vec::new(), SignatureShareG1::default()),
             fast_quorum: false,
@@ -413,7 +404,6 @@ impl Hash for QC {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
         hasher.update(&self.blk_hash);
-        hasher.update(&self.kind.digest());
         hasher.update(self.round.to_le_bytes());
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
@@ -427,16 +417,13 @@ impl fmt::Display for QC {
 
 impl fmt::Debug for QC {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self.kind {
-            VoteType::Commit => write!(f, "CommitQC({}, {})", self.blk_hash, self.round),
-            _ => write!(f, "NQC({}, {}, {})", self.kind, self.blk_hash, self.round),
-        }
+        write!(f, "NQC({}, {})", self.blk_hash, self.round)
     }
 }
 
 impl PartialEq for QC {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.blk_hash == other.blk_hash && self.round == other.round
+        self.blk_hash == other.blk_hash && self.round == other.round
     }
 }
 
