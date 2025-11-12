@@ -1,7 +1,7 @@
 #!/bin/bash
 
 RUNS=1
-BURSTS=(3500 4000) 
+BURSTS=(3000 3500 4000) 
 
 for BURST in ${BURSTS[@]}
 do

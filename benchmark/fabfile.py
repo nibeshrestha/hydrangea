@@ -115,12 +115,12 @@ def create_firewall(ctx):
 
 
 @task
-def remote(ctx, client_rate=4000, debug=False, consensus_only=True, update=True, aggregate=False):
+def remote(ctx, client_rate=3800, debug=False, consensus_only=True, update=True, aggregate=False):
     ''' Run benchmarks on GCP '''
     
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [40],
         'workers': 1,
         'collocate': True,
         'rate': [100_000],
@@ -140,17 +140,17 @@ def remote(ctx, client_rate=4000, debug=False, consensus_only=True, update=True,
  
     node_params = {
         'n': bench_params['nodes'][0], # Number of nodes
-        'f': 3, #Number of Byzantine parties tolerated
+        'f': 13, #Number of Byzantine parties tolerated
         'c': 0, # Number of crash faults,
         'k': 0, # a parameter
         'max_block_size': 10,
         'client_rate': client_rate,
         'consensus_only': consensus_only,
-        'timeout_delay': 5_000,  # ms
+        'timeout_delay': 10_000,  # ms
         'header_size': 1024_000,  # bytes
         'max_header_delay': 2000,  # ms
         'gc_depth': 50,  # rounds
-        'sync_retry_delay': 5_000,  # ms
+        'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
         'batch_size': 1024_000,  # bytes
         'max_batch_delay': 2000,  # ms
