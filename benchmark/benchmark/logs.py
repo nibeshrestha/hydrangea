@@ -100,6 +100,8 @@ class LogParser:
         self.block_first_commits = self._representative_results_by_digest(committed_blocks, True)
         self.block_last_commits = self._representative_results_by_digest(committed_blocks, False)
 
+        self.block_proposals_timestamps = sorted(self.block_proposals.values())
+
     # Filters the given list of results for each node (where each result
     # set is itself a list of (digest, timestamp) pairs), keeping the 
     # representative timestamp for each digest in the result set. This
@@ -548,9 +550,13 @@ class LogParser:
         csv_file_path = f'benchmark_{self.committee_size}_{self.config["header_size"]}_{self.config["block_size"]}.csv'
 
         write_consensus_to_csv(round(bcl_mean_first), round(bcl_median_first), round(blps_first), round(bcl_mean_last), round(bcl_median_last), round(blps_last), csv_file_path)
+
+        proposal_times = [(b-a) for a, b in zip(self.block_proposals_timestamps[:-1], self.block_proposals_timestamps[1:])]
+        block_proposal_time = mean(proposal_times) * 1000
         
         return (
             f' Execution time: {round(duration):,} s\n'
+            f' Block Proposal time : {round(block_proposal_time):,} ms\n'
             f'\n'
             f' Block Commit:\n'
             f'   To First Commit:\n'
