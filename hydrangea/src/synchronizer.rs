@@ -174,7 +174,7 @@ impl Synchronizer {
         server: &PublicKey,
         resume_from: Option<Block>,
     ) -> ConsensusResult<Option<Block>> {
-        if digest == &QC::genesis().blk_hash {
+        if digest == &QC::genesis().hash {
             Ok(Some(Block::genesis()))
         } else {
             match self.store.read(digest.to_vec()).await? {

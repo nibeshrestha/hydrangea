@@ -4,13 +4,13 @@ use crate::error::{ConsensusError, ConsensusResult};
 use crate::leader::LeaderElector;
 use crate::mempool::MempoolDriver;
 use crate::messages::{
-    Block, FallbackRecoveryProposal, NormalProposal, Timeout, Vote, VoteType, QC, TC, WQC,
+    Block, FallbackRecoveryProposal, NormalProposal, OptimisticProposal, ProposalType, Timeout,
+    Vote, VoteType, QC, TC,
 };
 use crate::proposer::{ProposalTrigger, ProposerMessage};
 use crate::synchronizer::Synchronizer;
 use crate::timer::Timer;
 use async_recursion::async_recursion;
-use blsttc::SignatureShareG1;
 use bytes::Bytes;
 use config::Committee;
 use crypto::{BlsSignatureService, Digest, Hash as _};
@@ -39,21 +39,25 @@ pub struct Core {
     committable_blocks: HashMap<Digest, Round>,
     consensus_only: bool,
     last_commit: Block,
-    last_vote: Vote,
+    // a_f
+    last_fallback_vote: Round,
+    // a_n
+    last_normal_vote: Round,
+    // a_o
+    last_optimistic_vote: Round,
+    // d_o
+    last_optimistic_vote_digest: Digest,
     // t_l
     last_timeout: Round,
     leader_elector: LeaderElector,
     // qc_l
     locked: QC,
-    high_wqc: WQC,
-    // Highest weak certificate
-    // hwqc: WQC,
     mempool_driver: MempoolDriver,
     name: PublicKey,
     // Index of uncommitted blocks by round, then by Proposal type.
     // Each round may have at most one Normal or one Fallback Proposal,
     // and up to two Optimistic Proposals.
-    pending_proposals: HashMap<Round, Digest>,
+    pending_proposals: HashMap<Round, HashMap<ProposalType, HashSet<Digest>>>,
     qc_sender: SimpleSender,
     qc_syncs: HashMap<PublicKey, Instant>,
     round: Round,
@@ -109,30 +113,28 @@ impl Core {
             let mut uncommitted_qcs = HashMap::new();
             let genesis_block = Block::genesis();
             let genesis_qc = QC::genesis();
+            let mut genesis_round_blocks = HashMap::new();
+            let mut genesis_round_normal_blocks = HashSet::new();
             let digest = genesis_block.digest();
+            genesis_round_normal_blocks.insert(digest.clone());
+            genesis_round_blocks.insert(ProposalType::Normal, genesis_round_normal_blocks);
             uncommitted_blocks.insert(digest.clone(), genesis_block.clone());
-            pending_proposals.insert(genesis_block.round, digest);
+            pending_proposals.insert(genesis_block.round, genesis_round_blocks);
             uncommitted_qcs.insert(genesis_block.round, genesis_qc.clone());
-
-            let lvote = Vote {
-                author: name,
-                blk_hash: genesis_block.digest(),
-                kind: VoteType::Normal,
-                round: 0,
-                signature: SignatureShareG1::default(),
-            };
 
             Self {
                 aggregator: Aggregator::new(committee.clone()),
                 committee,
                 committable_blocks: HashMap::new(),
                 consensus_only,
-                last_commit: genesis_block.clone(),
-                last_vote: lvote,
+                last_commit: genesis_block,
+                last_fallback_vote: GENESIS,
+                last_normal_vote: GENESIS,
+                last_optimistic_vote: GENESIS,
+                last_optimistic_vote_digest: digest,
                 last_timeout: GENESIS,
                 leader_elector,
                 locked: QC::genesis(),
-                high_wqc: WQC::genesis(),
                 mempool_driver,
                 name,
                 qc_sender: SimpleSender::new(),
@@ -336,21 +338,36 @@ impl Core {
         }
     }
 
-    fn update_pending_proposals(&mut self, block: &Block) {
+    fn update_pending_proposals(&mut self, block: &Block, kind: ProposalType) {
         // Should only ever be called with blocks that have already passed can_accept_block.
-        if self.pending_proposals.contains_key(&block.round) {
-            warn!("Already contains a block for this round {:?}", block.round);
+        if let Some(accepted_for_round) = self.pending_proposals.get_mut(&block.round) {
+            if let Some(accepted_for_kind) = accepted_for_round.get_mut(&kind) {
+                // Proposal passed validation, so this must be the second and final valid Optimistic Proposal.
+                assert!(kind == ProposalType::Optimistic);
+                assert!(accepted_for_kind.len() == 1);
+                accepted_for_kind.insert(block.digest());
+            } else {
+                // First proposal of this kind for this round.
+                let mut accepted_for_kind = HashSet::new();
+                accepted_for_kind.insert(block.digest());
+                accepted_for_round.insert(kind, accepted_for_kind);
+            }
         } else {
             // First proposal for this round.
-            self.pending_proposals.insert(block.round, block.digest());
+            let mut accepted_for_round = HashMap::new();
+            let mut accepted_for_kind = HashSet::new();
+            accepted_for_kind.insert(block.digest());
+            accepted_for_round.insert(kind, accepted_for_kind);
+            self.pending_proposals
+                .insert(block.round, accepted_for_round);
         }
     }
 
-    async fn store_block(&mut self, block: &Block) {
+    async fn store_block(&mut self, block: &Block, kind: ProposalType) {
         // Should only ever call this function with recent blocks.
         assert!(block.round > self.last_commit.round);
         // Store in-memory.
-        self.update_pending_proposals(block);
+        self.update_pending_proposals(block, kind);
         self.uncommitted_blocks
             .insert(block.digest(), block.clone());
 
@@ -464,20 +481,59 @@ impl Core {
         Ok(())
     }
 
-    fn can_vote(&self, b: &Block) -> bool {
-        self.last_timeout < b.round
+    fn can_vote(&self, b: &Block, t: &ProposalType) -> bool {
+        match t {
+            ProposalType::Fallback => {
+                self.last_fallback_vote < b.round
+                    && self.last_normal_vote < b.round
+                    && self.last_timeout < b.round
+                // TC quorum and block parentage have already been checked.
+            }
+            ProposalType::Normal => {
+                self.last_fallback_vote < b.round
+                    && self.last_normal_vote < b.round
+                    && (self.last_optimistic_vote < b.round
+                        || self.last_optimistic_vote_digest == b.digest())
+                    && self.last_timeout < b.round
+                // QC quorum and block parentage have already been checked.
+            }
+            ProposalType::Optimistic => {
+                self.last_fallback_vote < b.round
+                    && self.last_normal_vote < b.round
+                    && self.last_optimistic_vote < b.round
+                    && self.locked.hash == b.parent
+                    && self.locked.round == b.round - 1
+                    && self.last_timeout < b.round - 1
+            }
+        }
     }
 
-    async fn try_vote(&mut self) -> ConsensusResult<()> {
+    async fn try_vote_and_optimistically_propose(&mut self) -> ConsensusResult<()> {
         if let Some(accepted) = self.pending_proposals.get(&(self.round)).cloned() {
-            let b = self
-                .uncommitted_blocks
-                .get(&accepted)
-                .cloned()
-                .expect("Fatal: Block in pending_proposals not in uncommitted_blocks.");
+            // Try to extend and vote for each block that we have accepted for this round.
+            // Validation rules ensure that we will extend and vote for at most one Optimistic
+            // Proposal and either one Normal Proposal or one Fallback Recovery Proposal per
+            // round.
+            //
+            // If we extend and/or vote for:
+            //   - Optimistic & Normal: then both proposals must contain the same block.
+            //   - Optimistic & Fallback: then the Optimistic Proposal will fail.
+            for (t, proposals) in accepted {
+                for digest in proposals {
+                    // Block to be extended.
+                    let b = self
+                        .uncommitted_blocks
+                        .get(&digest)
+                        .cloned()
+                        .expect("Fatal: Block in pending_proposals not in uncommitted_blocks.");
 
-            if self.round == b.round && self.can_vote(&b) {
-                self.send_prepare_vote(&b).await?;
+                    if self.round == b.round && self.can_vote(&b, &t) {
+                        // Try to propose first, in case our vote triggers a QC and
+                        // causes us to advance round.
+                        self.propose_optimistic(b.clone()).await;
+                        self.send_prepare_vote(&b, &t).await?;
+                    }
+                }
             }
         }
         Ok(())
@@ -493,17 +549,23 @@ impl Core {
             debug!("Moved to round {}", self.round);
             // Try to vote and propose.
             // Covers the case where we receive the proposal for r before the QC for r-1.
-            self.try_vote().await?;
+            self.try_vote_and_optimistically_propose().await?;
         }
         Ok(())
     }
 
     async fn send_vote(&mut self, b: Digest, r: Round, t: VoteType) -> ConsensusResult<()> {
+        // let start_time = Instant::now();
         let vote = Vote::new(self.name, b, t.clone(), r, &mut self.bls_signature_service).await;
+        // let end_time = Instant::now();
         debug!("Created {:?}", vote);
-        if vote.kind == VoteType::Normal {
-            self.last_vote = vote.clone();
-        }
+        // let elapsed_time = end_time.duration_since(start_time);
+        // info!(
+        //     "time taken vote create : {:?} Round :{:?} Votetype: {:?}",
+        //     elapsed_time.as_secs_f64() * 1000.0,
+        //     r,
+        //     t
+        // );
 
         let _ = self.handle_vote(&vote).await;
 
@@ -512,18 +574,30 @@ impl Core {
         Ok(())
     }
 
-    async fn send_prepare_vote(&mut self, block: &Block) -> ConsensusResult<()> {
-        self.send_vote(block.digest(), block.round, VoteType::Normal)
-            .await
+    async fn send_prepare_vote(&mut self, block: &Block, t: &ProposalType) -> ConsensusResult<()> {
+        let kind = match t {
+            ProposalType::Fallback => {
+                self.last_fallback_vote = block.round;
+                VoteType::PrepareFallback
+            }
+            ProposalType::Normal => {
+                self.last_normal_vote = block.round;
+                VoteType::PrepareNormal
+            }
+            ProposalType::Optimistic => {
+                self.last_optimistic_vote = block.round;
+                self.last_optimistic_vote_digest = block.digest();
+                VoteType::PrepareOptimistic
+            }
+        };
+        self.send_vote(block.digest(), block.round, kind).await
     }
 
     async fn send_timeout(&mut self, round: Round) -> ConsensusResult<()> {
         // Avoid spamming Timeouts.
         if !self.timeout_syncs.contains(&round) {
             let timeout = Timeout::new(
-                self.last_vote.clone(),
                 self.locked.clone(),
-                self.high_wqc.clone(),
                 round,
                 self.name,
                 self.signature_service.clone(),
@@ -556,18 +630,14 @@ impl Core {
             debug!("Processing {:?}", vote);
             let qc = match vote.kind {
                 VoteType::Commit => self.aggregator.add_commit_vote(vote.clone())?,
-                _ => self.aggregator.add_normal_vote(vote.clone())?,
+                VoteType::PrepareNormal => self.aggregator.add_normal_vote(vote.clone())?,
+                VoteType::PrepareOptimistic => self.aggregator.add_optimistic_vote(vote.clone())?,
+                _ => self.aggregator.add_fallback_vote(vote.clone())?,
             };
             if let Some(qc) = qc {
                 debug!("Assembled {:?}", qc);
                 self.handle_qc(&qc).await?;
             }
-            // Add the new vote to our aggregator and see if we have a quorum.
-            // Validation is done inside the aggregator.
-            // if let Some(qc) = self.aggregator.add_normal_vote(vote.clone())? {
-            //     debug!("Assembled {:?}", qc);
-            //     self.handle_qc(&qc).await?;
-            // }
         }
         Ok(())
     }
@@ -665,6 +735,31 @@ impl Core {
         Ok(())
     }
 
+    async fn propose_optimistic(&mut self, parent: Block) {
+        if self.last_optimistic_vote_digest != parent.digest() {
+            // Have not already extended this block. Prevents us from generating duplicate
+            // proposals while still allowing us to create multiple Optimistic Proposals
+            // if necessary. This improves the responsiveness of recovery to the Optimistic
+            // Path after fallback as described below.
+            //
+            // Scenario:
+            //   1. L_r creates O_r whilst in r-1 after voting for B_{r-1}.
+            //   2. A quorum of validators vote for the same B_{r-1}, so QC_{r-1} exists.
+            //   3. However, it so happens that at least f+1 honest send T_{r-1} before observing
+            //     QC_{r-1}.
+            //   4. L_r then enters r via TC_{r-1} and creates F_r.
+            //   5. L_{r+1} enters r via QC_{r-1}, having not sent T_{r-1}, and votes for and
+            //     extends O_r with O_{r+1}.
+            //   However, since TC_{r-1} exists we know that the Optimistic Vote Rule will prevent
+            //   O_r from becoming certified. Consequently, this O_{r+1} is also guaranteed to
+            //   fail. Therefore, to ensure that we resume the Optimistic Path as soon as possible,
+            //   L_{r+1} needs to be able to create O_{r+1}' when it subsequently receives and votes
+            //   for F_r.
+            self.propose_if_leader(parent.round + 1, ProposalTrigger::Block(parent))
+                .await
+        }
+    }
+
     async fn handle_prepare_qc(&mut self, qc: &QC) -> ConsensusResult<()> {
         if !self.uncommitted_qcs.contains_key(&qc.round) {
             // Ensure QC is valid (has a quorum). This is a relatively expensive check.
@@ -684,13 +779,13 @@ impl Core {
 
                 if self.last_timeout < qc.round {
                     // Send a Commit Vote.
-                    self.send_vote(qc.blk_hash.clone(), qc.round, VoteType::Commit)
+                    self.send_vote(qc.hash.clone(), qc.round, VoteType::Commit)
                         .await?
                 }
             }
 
             // See if we have the related block and request it from our peers if we do not.
-            self.get_block(qc.blk_hash.clone(), qc.round).await?;
+            self.get_block(qc.hash.clone(), qc.round).await?;
             self.broadcast(ConsensusMessage::QC(qc.clone())).await;
             self.advance_to_round(qc.round + 1).await?;
         }
@@ -698,12 +793,12 @@ impl Core {
     }
 
     async fn handle_commit_qc(&mut self, qc: &QC) -> ConsensusResult<()> {
-        if !self.committable_blocks.contains_key(&qc.blk_hash) {
+        if !self.committable_blocks.contains_key(&qc.hash) {
             // Ensure QC is valid (has a quorum). This is a relatively expensive check.
             // qc.is_well_formed(&self.committee, &self.sorted_keys, &self.combined_pubkey)?;
             debug!("Processing new QC {:?}", qc);
-            self.schedule_commit(&qc.blk_hash, qc.round).await?;
-            // self.broadcast(ConsensusMessage::QC(qc.clone())).await;
+            self.schedule_commit(&qc.hash, qc.round).await?;
+            self.broadcast(ConsensusMessage::QC(qc.clone())).await;
             self.aggregator.cleanup_prepares(&qc.round);
         }
         // else: Already observed this Commit QC but still syncing ancestors. Ignore.
@@ -724,19 +819,11 @@ impl Core {
         }
     }
 
-    async fn handle_wqc(&mut self, wqc: &WQC) -> ConsensusResult<()> {
-        if self.high_wqc.round < wqc.round {
-            self.high_wqc = wqc.clone();
-        }
-        Ok(())
-    }
-
     async fn handle_tc(&mut self, tc: &TC) -> ConsensusResult<()> {
         debug!("Received TC {:?}", tc);
         if self.round < tc.round + 1 {
             // Process the high QC in case it is new.
             self.handle_qc(&tc.high_qc).await?;
-            self.handle_wqc(&tc.high_wqc).await?;
 
             // Although the paper has only proposal under this condition, this is only to make
             // the proof reasoning simpler. We need not send Timeout messages for lower rounds
@@ -760,11 +847,38 @@ impl Core {
         Ok(())
     }
 
-    fn is_non_equivocal_and_certifiable(&self, block: &Block) -> bool {
-        !self.pending_proposals.contains_key(&block.round)
+    fn is_non_equivocal_and_certifiable(&self, block: &Block, kind: ProposalType) -> bool {
+        if let Some(accepted) = self.pending_proposals.get(&block.round) {
+            let no_fallback = !accepted.contains_key(&ProposalType::Fallback);
+
+            match kind {
+                ProposalType::Fallback | ProposalType::Normal =>
+                // Only accept one Normal Proposal or one Fallback Proposal per round.
+                // Leader is equivocating otherwise.
+                {
+                    no_fallback && !accepted.contains_key(&ProposalType::Normal)
+                }
+                ProposalType::Optimistic => {
+                    // Ignore if already accepted a Fallback Proposal, since its existence
+                    // implies that this Optimistic Proposal cannot become certified.
+                    if let Some(accepted_optimistic) = accepted.get(&ProposalType::Optimistic) {
+                        // Honest leaders will only ever create at most two Optimistic Proposals per round.
+                        no_fallback && accepted_optimistic.len() < 2
+                    } else {
+                        no_fallback
+                    }
+                }
+            }
+        } else {
+            true
+        }
     }
 
-    async fn can_accept_block(&mut self, block: &Block) -> ConsensusResult<bool> {
+    async fn can_accept_block(
+        &mut self,
+        block: &Block,
+        kind: ProposalType,
+    ) -> ConsensusResult<bool> {
         let digest = block.digest();
 
         if block.round <= self.last_commit.round {
@@ -783,8 +897,7 @@ impl Core {
             // block was certified for this round instead. Either way, no need to
             // keep processing.
             assert!(
-                qc.blk_hash != block.digest()
-                    || self.uncommitted_blocks.contains_key(&block.digest())
+                qc.hash != block.digest() || self.uncommitted_blocks.contains_key(&block.digest())
             );
             return Ok(false);
         }
@@ -809,18 +922,27 @@ impl Core {
         }
 
         // Block has a valid payload.
-        Ok(self.is_non_equivocal_and_certifiable(block))
+        Ok(self.is_non_equivocal_and_certifiable(block, kind))
     }
 
-    async fn process_block(&mut self, block: &Block) -> ConsensusResult<()> {
+    async fn process_block(&mut self, block: &Block, kind: ProposalType) -> ConsensusResult<()> {
         debug!("Received Block {:?}", block);
 
-        if self.can_accept_block(block).await? {
-            self.store_block(block).await;
+        if self.can_accept_block(block, kind.clone()).await? {
+            self.store_block(block, kind).await;
             self.try_commit_or_sync_ancestor(block).await?;
-            self.try_vote().await?;
+            self.try_vote_and_optimistically_propose().await?;
         }
         Ok(())
+    }
+
+    async fn process_optimistic_proposal(&mut self, p: OptimisticProposal) -> ConsensusResult<()> {
+        debug!("Received Optimistic Proposal {:?}", p);
+        // Ensure:
+        //   1. Proposer has voting rights.
+        //   2. Block is signed by the proposer.
+        p.is_well_formed(&self.committee)?;
+        self.process_block(&p.block, ProposalType::Optimistic).await
     }
 
     async fn process_normal_proposal(&mut self, p: NormalProposal) -> ConsensusResult<()> {
@@ -832,7 +954,7 @@ impl Core {
         //   2. Proposal includes a QC p.block.round - 1 and this QC certifies block.parent.
         //   3. Block is signed by the proposer.
         p.is_well_formed(&self.committee)?;
-        self.process_block(&p.block).await
+        self.process_block(&p.block, ProposalType::Normal).await
     }
 
     async fn process_fallback_recovery_proposal(
@@ -849,13 +971,14 @@ impl Core {
         //   4. The parent of the included block is the block certified by
         //      the QC with the highest round included in the included TC.
         p.is_well_formed(&self.committee)?;
-        self.process_block(&p.block).await
+        self.process_block(&p.block, ProposalType::Fallback).await
     }
 
     async fn handle_proposal(&mut self, proposal: ProposalMessage) -> ConsensusResult<()> {
         match proposal {
             ProposalMessage::F(f) => self.process_fallback_recovery_proposal(f).await,
             ProposalMessage::N(n) => self.process_normal_proposal(n).await,
+            ProposalMessage::O(o) => self.process_optimistic_proposal(o).await,
         }
     }
 
@@ -881,7 +1004,7 @@ impl Core {
             // (B_a) when the Synchronizer sends B' to us via loopback, which will trigger a
             // second SyncRequest for B_a (unless we get B_a before making this second request,
             // which should not happen when network latency is non-trivial).
-            self.store_block(&block).await;
+            self.store_block(&block, ProposalType::Normal).await;
             self.try_commit_or_sync_ancestor(&block).await?;
         }
         Ok(())
@@ -908,14 +1031,12 @@ impl Core {
         if qc.round > self.last_commit.round {
             match qc.kind {
                 VoteType::Commit => {
-                    if !self.committable_blocks.contains_key(&qc.blk_hash) {
-                        // let start_time = Instant::now();
+                    if !self.committable_blocks.contains_key(&qc.hash) {
                         qc.is_well_formed(&self.committee)?;
                     }
                 }
                 _ => {
                     if !self.uncommitted_qcs.contains_key(&qc.round) {
-                        // let start_time = Instant::now();
                         qc.is_well_formed(&self.committee)?;
                     }
                 }

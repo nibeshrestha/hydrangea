@@ -1,7 +1,10 @@
 use crate::consensus::{ConsensusMessage, ProposalMessage, Round};
-use crate::messages::{Block, FallbackRecoveryProposal, NormalProposal, QC, TC};
+use crate::messages::{
+    Block, FallbackRecoveryProposal, NormalProposal, OptimisticProposal, QC, TC,
+};
 use bytes::Bytes;
 use config::Committee;
+use crypto::Hash;
 use crypto::{PublicKey, SignatureService};
 use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
@@ -14,6 +17,7 @@ use tokio::time::{sleep, Duration, Instant};
 pub enum ProposalTrigger {
     QC(QC),
     TC(TC),
+    Block(Block),
 }
 
 #[derive(Debug)]
@@ -79,22 +83,28 @@ impl Proposer {
     // but have not yet satisfied the commit rule. Txs should only be removed from the Proposer
     // once they have been committed.
     fn get_payload(&mut self, r: Round) -> Vec<Certificate> {
-        if self.consensus_only {
-            let mut payload = Vec::new();
-
-            for _ in 0..self.max_block_size {
-                // TODO: Payloads for all PoC blocks are the same, but when it is possible
-                // for them to differ then it is necessary for the Proposer to ensure that
-                // it reproposes the same block
-                payload.push(Certificate::default());
-            }
-
-            payload
+        if self.last_proposed.round == r {
+            // Ensure that we propose the same payload if we end up making multiple proposals
+            // for a given round. This is normal behaviour due to Optimistic Proposals.
+            self.last_proposed.payload.clone()
         } else {
-            if self.buffer.len() < self.max_block_size {
-                self.buffer.drain(..).collect()
+            if self.consensus_only {
+                let mut payload = Vec::new();
+
+                for _ in 0..self.max_block_size {
+                    // TODO: Payloads for all PoC blocks are the same, but when it is possible
+                    // for them to differ then it is necessary for the Proposer to ensure that
+                    // it reproposes the same block
+                    payload.push(Certificate::default());
+                }
+
+                payload
             } else {
-                self.buffer.drain(0..self.max_block_size).collect()
+                if self.buffer.len() < self.max_block_size {
+                    self.buffer.drain(..).collect()
+                } else {
+                    self.buffer.drain(0..self.max_block_size).collect()
+                }
             }
         }
     }
@@ -131,22 +141,20 @@ impl Proposer {
     }
 
     fn record_proposal(&mut self, b: Block) {
-        info!("Created {:?}", b);
-        self.last_proposed = b;
+        if b.digest() != self.last_proposed.digest() {
+            info!("Created {:?}", b);
+            // Record the most recent proposal to ensure that the same payload is used for
+            // any additional proposals created for this round, and that the block creation
+            // log only prints once.
+            self.last_proposed = b;
+        }
     }
 
     async fn make_fallback_proposal(&mut self, tc: TC) -> ProposalMessage {
         let r = tc.round + 1;
-        let safe_blk_hash;
-        if tc.high_wqc.round > tc.high_qc.round {
-            safe_blk_hash = tc.high_wqc.blk_hash.clone();
-        } else {
-            safe_blk_hash = tc.high_qc.blk_hash.clone();
-        }
-
         let b = Block::new(
             self.name,
-            safe_blk_hash,
+            tc.high_qc.hash.clone(),
             self.get_payload(r),
             r,
             self.signature_service.clone(),
@@ -160,7 +168,7 @@ impl Proposer {
         let r = parent_qc.round + 1;
         let b = Block::new(
             self.name,
-            parent_qc.blk_hash.clone(),
+            parent_qc.hash.clone(),
             self.get_payload(r),
             r,
             self.signature_service.clone(),
@@ -170,9 +178,24 @@ impl Proposer {
         ProposalMessage::N(NormalProposal::new(b, parent_qc))
     }
 
+    async fn make_optimistic_proposal(&mut self, parent: Block) -> ProposalMessage {
+        let r = parent.round + 1;
+        let b = Block::new(
+            self.name,
+            parent.digest(),
+            self.get_payload(r),
+            r,
+            self.signature_service.clone(),
+        )
+        .await;
+        self.record_proposal(b.clone());
+        ProposalMessage::O(OptimisticProposal::new(b))
+    }
+
     async fn propose(&mut self, trigger: ProposalTrigger) {
         // Generate a new Proposal.
         let proposal = match trigger {
+            ProposalTrigger::Block(parent) => self.make_optimistic_proposal(parent).await,
             ProposalTrigger::QC(parent_qc) => self.make_normal_proposal(parent_qc).await,
             ProposalTrigger::TC(tc) => self.make_fallback_proposal(tc).await,
         };

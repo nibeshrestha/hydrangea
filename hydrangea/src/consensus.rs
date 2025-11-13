@@ -4,7 +4,9 @@ use crate::error::ConsensusError;
 use crate::helper::Helper;
 use crate::leader::LeaderElector;
 use crate::mempool::MempoolDriver;
-use crate::messages::{Block, FallbackRecoveryProposal, NormalProposal, Timeout, Vote, QC, TC};
+use crate::messages::{
+    Block, FallbackRecoveryProposal, NormalProposal, OptimisticProposal, Timeout, Vote, QC, TC,
+};
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
@@ -46,6 +48,7 @@ pub enum ConsensusMessage {
 pub enum ProposalMessage {
     F(FallbackRecoveryProposal),
     N(NormalProposal),
+    O(OptimisticProposal),
 }
 
 pub struct Consensus;
