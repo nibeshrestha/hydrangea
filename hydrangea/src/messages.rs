@@ -416,21 +416,6 @@ impl QC {
         if self.round == 0 {
             Ok(())
         } else {
-            // // Ensure the QC has a quorum.
-            // let mut weight = 0;
-            // let mut used = HashSet::new();
-            // for (name, _) in self.votes.iter() {
-            //     ensure!(!used.contains(name), ConsensusError::AuthorityReuse(*name));
-            //     let voting_rights = committee.stake(name);
-            //     ensure!(voting_rights > 0, ConsensusError::UnknownAuthority(*name));
-            //     used.insert(*name);
-            //     weight += voting_rights;
-            // }
-            // // TODO: Change to error log instead of panic.
-            // ensure!(
-            //     weight >= committee.quorum_threshold(),
-            //     ConsensusError::QCRequiresQuorum(self.round)
-            // );
             let mut ids = Vec::new();
 
             for idx in 0..committee.size() {

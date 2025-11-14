@@ -1,6 +1,5 @@
 use crate::error::ConsensusResult;
 use crate::messages::Block;
-use blsttc::PublicKeyShareG2;
 use config::Committee;
 use primary::Certificate;
 use tokio::sync::mpsc::Sender;
