@@ -113,17 +113,17 @@ def create_firewall(ctx):
 
 
 @task
-def remote(ctx, block_size=100, debug=False, consensus_only=True, update=True, aggregate=False):
+def remote(ctx, block_size=800, debug=False, consensus_only=True, update=True, aggregate=False):
     ''' Run benchmarks on AWS '''
     
     bench_params = {
         'faults': 0,
-        'nodes': [11],
+        'nodes': [51],
         'workers': 1,
         'collocate': True,
         'rate': [100_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 90,
         'runs': 1,
         'burst': [50],
     }
@@ -138,7 +138,7 @@ def remote(ctx, block_size=100, debug=False, consensus_only=True, update=True, a
  
     node_params = {
         'n': bench_params['nodes'][0], # Number of nodes
-        'f': 2, #Number of Byzantine parties tolerated
+        'f': 10, #Number of Byzantine parties tolerated
         'k': 0, # a parameter
         'max_block_size': block_size,
         'consensus_only': consensus_only,

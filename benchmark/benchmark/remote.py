@@ -10,6 +10,7 @@ import subprocess
 from subprocess import SubprocessError
 import traceback
 from datetime import datetime
+from itertools import zip_longest
 
 from benchmark.config import Committee, BlsKey, NodeParameters, BenchParameters, ConfigError, EdKey
 from benchmark.utils import BenchError, Print, PathMaker, progress_bar
@@ -218,10 +219,9 @@ class Bench:
             hosts = self.manager.hosts()
             if sum(len(x) for x in hosts.values()) < nodes:
                 return []
-
             # Select the hosts in different data centers.
-            ordered = zip(*hosts.values())
-            ordered = [x for y in ordered for x in y]
+            ordered = zip_longest(*hosts.values(), fillvalue=None)
+            ordered = [x for y in ordered for x in y if x]
             return ordered[:nodes]
 
         # Spawn the primary and each worker on a different machine. Each
