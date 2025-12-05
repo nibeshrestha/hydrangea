@@ -14,10 +14,10 @@ GCP_KEY_PATH = '../benchmark/benchmark/key.json'
 SSH_PUB_KEY_PATH = '/Users/nibesh/.ssh/id_rsa.pub'
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GCP_KEY_PATH
-compute_service = build('compute', 'v1')
+# compute_service = build('compute', 'v1')
 
 # Set up authentication using a service account
-credentials = service_account.Credentials.from_service_account_file(GCP_KEY_PATH)
+# credentials = service_account.Credentials.from_service_account_file(GCP_KEY_PATH)
 
 class GCPError(Exception):
     def __init__(self, error):
@@ -27,16 +27,20 @@ class GCPError(Exception):
 class InstanceManager:
     INSTANCE_NAME = 'hydrangea-bench'
     PROJECT_ID = 'supra-testnet-417213'
-
 ##################################################################
 
     def __init__(self,settings):
+        # Set up authentication using a service account
+        credentials = service_account.Credentials.from_service_account_file(GCP_KEY_PATH)
+
         self.compute_client = compute_v1.InstancesClient(credentials=credentials)
         assert isinstance(settings, Settings)
         self.clients = {}
         self.settings = settings
         for zone in self.settings.zones:
             self.clients[zone] = compute_v1.InstancesClient(credentials=credentials)
+
+
 
     @classmethod
     def make(cls, settings_file='settings.json'):
@@ -79,6 +83,7 @@ class InstanceManager:
             "allowed": [{"IPProtocol": "tcp", "ports": ports}],
             "sourceRanges": ["0.0.0.0/0"],
         }
+        compute_service = build('compute', 'v1')
         firewalls = compute_service.firewalls()
         try:
             result = firewalls.insert(project=self.PROJECT_ID, body=firewall_rule).execute()
